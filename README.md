@@ -13,9 +13,11 @@ flowchart TD
     subgraph Backend
         C(Event Handler) <-->|Message i/o| Y(P2P Node)
 		C <-->|Peer discovery/node init| D[(Pubkey Registry)]
-        C <-->|Offline message sync| F[(DHT Message Cache)]
+        F[(DHT Message Cache)] -->|Offline message sync| C
+        C <--> Z[(Local chat history)]
     end
     X -->|Backend commands|C
     C -->|Backend event notifications|X
     Y <-->|Iroh P2P Protocl| E(Other group nodes)
+    E -->|Node offline cache response| F
 ```
