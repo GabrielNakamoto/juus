@@ -1,6 +1,11 @@
 # Juus - "Just Us"
 
-P2P social group chat platform. Principles: low latency, privacy and features that people will use.
+P2P social group chat platform.
+
+**Principles:**
+- low latency
+- privacy
+- features that users will actually use
 
 ## Architecture chart
 
