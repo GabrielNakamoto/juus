@@ -22,6 +22,10 @@
 * What is the login flow?
 	* How should authorization/sign up be performed
 		* Look into JWT (Json web token) auth
+		* Maybe authentication isnt even that necessary?
+			* Email authentication eventually to prevent mass botting??
+			* For now users can be created arbitrarily and wont take up resources until added to a group
+			* Allow a passcode feature to protect privacy
 * How should a groups messages be stored?
 	* Start with local db (sqlite most likely)
 	* Add sharding for scalability if needed
