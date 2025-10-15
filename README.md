@@ -16,13 +16,15 @@ flowchart TD
         B -->|user input| X
     end
     subgraph Backend
-        C(Event Handler) <-->|Message i/o| Y(P2P Node)
-		C <-->|Peer discovery/node init| D[(Pubkey Registry)]
-        F[(DHT Message Cache)] -->|Offline message sync| C
+        C(Event Handler) -->|Message i/o|G
+        G[Gossip protocol] <--> Y(P2P Node)
+        G -->|Node offline cache response| H
+        H[Doc protocol] <--> Y
+		C <-->|Peer discovery/node init| H
         C <--> Z[(Local chat history)]
+
     end
-    X -->|Backend commands|C
+    X -->|Backend commands|C(Event Handler)
     C -->|Backend event notifications|X
-    Y <-->|Iroh P2P Protocl| E(Other group nodes)
-    E -->|Node offline cache response| F
+    Y <--> E(Other group nodes)
 ```
