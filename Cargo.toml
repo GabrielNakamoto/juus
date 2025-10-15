@@ -1,10 +1,10 @@
 [workspace]
-members = [ "common", "j_central",
-"j_core"
-, "j_ui"]
+members = [
+"common",
+"backend",
+"ui"
+]
 resolver = "2"
-
-[profile]
 
 [profile.wasm-dev]
 inherits = "dev"

@@ -1,10 +1,11 @@
 [package]
-name = "j_ui"
+name = "ui"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+backend = { path = "../backend" }
 anyhow = "1.0.100"
 dioxus = "0.6.3"
 serde_json = "1.0.145"

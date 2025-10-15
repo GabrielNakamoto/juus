@@ -1,11 +1,12 @@
-pub mod config;
 use std::sync::Arc;
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
+pub mod config;
+pub mod model;
 
 // Commands sent from UI
+#[derive(Debug)]
 pub enum UserCommand {
 	// StartTyping -> ui only event?
 	// SendMessage(Message),
@@ -13,6 +14,7 @@ pub enum UserCommand {
 	CreateGroup(String),
 }
 
+#[derive(Clone)]
 pub struct ChannelWrapper {
 	pub tx: mpsc::UnboundedSender<UserCommand>,
 	// Arc + Mutex for multi thread

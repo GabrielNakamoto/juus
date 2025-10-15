@@ -8,6 +8,7 @@ use argon2::{
     },
     Argon2
 };
+
 /*
 Json user config,
 created after authenticated sign up
@@ -15,8 +16,9 @@ created after authenticated sign up
 #[derive(PartialEq, Clone, Deserialize, Serialize)]
 pub struct UserConfig {
 	pub username: String,
-	pub group_members: Option<Vec<String>>,
+	pub group: Option<String>,
 	pub password_hash: Option<String> // if no password hash then user doesnt care about authenticated access
+	// pub group_members: Option<Vec<String>>,
 	// metadata?
 	// auth data?
 }
@@ -32,9 +34,13 @@ impl UserConfig {
 
 		Ok(Self {
 			username,
-			group_members: None,
+			group: None,
 			password_hash
 		})
+	}
+
+	pub fn requires_password(&self) -> bool {
+		self.password_hash.is_some()
 	}
 
 	pub fn save(&self) -> anyhow::Result<()> {
@@ -42,10 +48,6 @@ impl UserConfig {
 		let mut file = File::create(CONFIG_PATH)?;
 
 		Ok(file.write_all(data.as_bytes())?)
-	}
-
-	pub fn requires_password(&self) -> bool {
-		self.password_hash.is_some()
 	}
 
 	fn hash_password(password: &str) -> anyhow::Result<String> {

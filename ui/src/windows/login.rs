@@ -30,7 +30,6 @@ pub fn LogInApp(mut props: LogInProps) -> Element {
 
 					true
 				};
-				println!("Log in / sign up result: {}", result);
 				*props.logged_in.write() = result;
 			},
 			if ! signed_up {

@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use common::UserCommand;
+use common::model::Model;
 use log::info;
 
 pub fn GroupsApp() -> Element {

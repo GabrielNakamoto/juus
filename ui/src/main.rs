@@ -2,8 +2,10 @@ use log::info;
 use dioxus::prelude::*;
 use std::path::Path;
 use common::config::UserConfig;
+use common::model::Model;
 use windows::login::{LogInApp, LogInProps};
 use dioxus_desktop::{Config, WindowBuilder};
+use dioxus_desktop::tao::window::Fullscreen;
 
 mod windows;
 
@@ -14,10 +16,12 @@ fn main() {
 			WindowBuilder::new()
 				.with_title("juus")
 				.with_focused(true)
+				.with_maximized(true)
 				.with_resizable(false)
+				// .with_fullscreen(Some(Fullscreen::Borderless(None)))
 				//.with_decorations(false)
-				// .with_fullscreen()
 		);
+
 	dioxus::LaunchBuilder::desktop()
 		.with_cfg(config)
 		.launch(App);
@@ -31,6 +35,10 @@ fn get_user_config(path: &Path) -> anyhow::Result<UserConfig> {
 
 #[component]
 fn App() -> Element {
+// 0. Bootstrap backend threads
+	let mut runner = backend::CommandRunner::default();
+	runner.run();
+
 // 1. Ensure user is logged in / signed up
 	let config_path = Path::new("user.json");
 
@@ -53,6 +61,11 @@ fn App() -> Element {
 			}
 		}
 	}
+
+	/*
+	let model = Model { config: config.unwrap() };
+	use_context_provider(|| model);
+	*/
 
 // 2. Ensure user is in a group with 1 or more people
 	rsx! {
