@@ -1,4 +1,33 @@
 pub mod config;
+use std::sync::Arc;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+use tokio::sync::mpsc;
+
+
+// Commands sent from UI
+pub enum UserCommand {
+	// StartTyping -> ui only event?
+	// SendMessage(Message),
+	InviteMember(String),
+	CreateGroup(String),
+}
+
+pub struct ChannelWrapper {
+	pub tx: mpsc::UnboundedSender<UserCommand>,
+	// Arc + Mutex for multi thread
+	// mutability
+	pub rx: Arc<Mutex<mpsc::UnboundedReceiver<UserCommand>>>
+}
+
+pub static CMD_CHANNEL: Lazy<ChannelWrapper> = Lazy::new(|| {
+	let (tx, mut rx) = mpsc::unbounded_channel();
+
+	ChannelWrapper {
+		tx,
+		rx: Arc::new(Mutex::new(rx))
+	}
+});
 /*
 use serde::{Deserialize, Serialize};
 
@@ -16,17 +45,6 @@ enum MessageType {
 struct Message {
 	kind: MessageType,
 	reply_id: Option<MessageId>
-}
-
-// Commands sent from UI
-enum UserCommand {
-	// StartTyping -> ui only event
-	SendMessage(Message),
-	InviteMember(String),
-	CreateGroup,
-	/*
-	StartCall,
-	*/
 }
 
 // Notifications to be send to UI

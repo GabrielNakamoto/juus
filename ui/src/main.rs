@@ -3,12 +3,24 @@ use dioxus::prelude::*;
 use std::path::Path;
 use common::config::UserConfig;
 use windows::login::{LogInApp, LogInProps};
+use dioxus_desktop::{Config, WindowBuilder};
 
 mod windows;
 
 fn main() {
 	env_logger::init();
-	dioxus::launch(App);
+	let config = Config::default()
+		.with_window(
+			WindowBuilder::new()
+				.with_title("juus")
+				.with_focused(true)
+				.with_resizable(false)
+				//.with_decorations(false)
+				// .with_fullscreen()
+		);
+	dioxus::LaunchBuilder::desktop()
+		.with_cfg(config)
+		.launch(App);
 }
 
 fn get_user_config(path: &Path) -> anyhow::Result<UserConfig> {
@@ -30,7 +42,6 @@ fn App() -> Element {
 		info!("Found user config");
 		(! conf.requires_password(), Some(conf))
 	};
-	info!("Log in required: {}", logged_in);
 
 	let signed_up = config.is_some();
 	let authenticated = use_signal(|| logged_in);
