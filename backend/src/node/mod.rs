@@ -1,6 +1,6 @@
 use libp2p::{
 	noise, tcp, yamux, gossipsub, mdns,
-	swarm::{Swarm, NetworkBehaviour},
+	swarm::{Swarm, SwarmEvent, NetworkBehaviour},
 	futures::StreamExt
 };
 
@@ -10,7 +10,11 @@ use std::{
 	time::Duration
 };
 
-use log::info;
+use anyhow::Context;
+use common::{Message, MessageType};
+use tokio::sync::mpsc;
+
+use log::{info, warn};
 
 #[derive(NetworkBehaviour)]
 struct JuBehaviour {
@@ -18,12 +22,16 @@ struct JuBehaviour {
 	mdns: mdns::tokio::Behaviour
 }
 
+type MessageStream = mpsc::Receiver<Message>;
+
 pub struct P2PNode {
-	swarm: Swarm<JuBehaviour>
+	swarm: Swarm<JuBehaviour>,
+	messages: MessageStream,
+	topic: gossipsub::IdentTopic
 }
 
 impl P2PNode {
-	pub async fn new() -> anyhow::Result<Self> {
+	pub async fn new(stream: MessageStream) -> anyhow::Result<Self> {
 		let mut swarm = libp2p::SwarmBuilder::with_new_identity()
 			.with_tokio()
 			.with_tcp(
@@ -56,30 +64,63 @@ impl P2PNode {
 			})?
 			.build();
 
+			let topic = gossipsub::IdentTopic::new("juus-messages");
+			swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+
 		Ok(Self {
-			swarm
+			swarm,
+			messages: stream,
+			topic
 		})
 	}
 
-	pub async fn listen(&mut self) -> anyhow::Result<()> {
-		let topic = gossipsub::IdentTopic::new("juus-messages");
-		self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+	pub fn publish_message(&mut self, data: Vec<u8>) -> anyhow::Result<()> {
+		self.swarm
+			.behaviour_mut().gossipsub
+			.publish(self.topic.clone(), &data[..])
+			.context("Failed to publish message to gossipsub topic")?;
+		Ok(())
+	}
 
+	pub async fn listen(&mut self, port: Option<u32>) -> anyhow::Result<()> {
 		// let mut stdin = io::BufReader::new(io::stdin()).lines();
-		self.swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
-		self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+		self.swarm.listen_on(format!("/ip4/0.0.0.0/udp/{}/quic-v1", port.unwrap_or(0)).parse()?)?;
+		self.swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port.unwrap_or(0)).parse()?)?;
 
 		loop {
 			tokio::select! {
-				/*
-				Ok(Some(line)) = stdin.next_line() => {
-					if let Err(e) = swarm
-						.behaviour_mut().gossipsub
-						.publish(topic.clone(), line.as_bytes()) {
+				Some(msg) = self.messages.recv() => {
+					let data = match msg.kind {
+						MessageType::Text(txt) => txt.as_bytes().to_vec()
+					};
+					if let Err(e) = self.publish_message(data) {
 						info!("Gossipsub public error: {e:?}");
 					}
-				}*/
+				},
 				event = self.swarm.select_next_some() => match event {
+					SwarmEvent::Behaviour(JuBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+						for (p_id, maddr) in list {
+							info!("mDNS discovered peer with id: {}", p_id);
+							self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&p_id);
+						}
+					},
+					SwarmEvent::Behaviour(JuBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+						for (p_id, maddr) in list {
+							info!("mDNS peer expired with id: {}", p_id);
+							self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&p_id);
+						}
+					},
+					SwarmEvent::NewListenAddr { address, .. } => {
+						info!("Local node is listening on address: {}", address);
+					},
+					SwarmEvent::Behaviour(JuBehaviourEvent::Gossipsub(gossipsub::Event::Message{
+						propagation_source: p_id,
+						message_id: m_id,
+						message
+					})) => {
+						info!("Received message from peer [{}]:\n{}", p_id,
+							String::from_utf8_lossy(&message.data));
+					},
 					_ => info!("P2P Swarm event: {:?}", event)
 				}
 			}

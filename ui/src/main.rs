@@ -33,11 +33,23 @@ fn get_user_config(path: &Path) -> anyhow::Result<UserConfig> {
 		.map_err(|e| anyhow::anyhow!("Failed to decode user config: {}", e))
 }
 
+use clap::Parser;
+#[derive(Parser)]
+#[command(version = None, about = None, long_about = None)]
+struct Args {
+	#[arg(short, long)]
+	port: u32
+}
+
 #[component]
 fn App() -> Element {
 // 0. Bootstrap backend threads
-	let mut runner = use_signal(|| backend::CommandRunner::new());
-	runner.write().run();
+	use_hook(|| {
+		let args = Args::parse();
+		let mut runner = backend::CommandRunner::new();
+		runner.run(Some(args.port));
+		runner
+	});
 // 1. Ensure user is logged in / signed up
 	let config_path = Path::new("user.json");
 
@@ -61,15 +73,17 @@ fn App() -> Element {
 		}
 	}
 
-	/*
 	let model = Model { config: config.unwrap() };
 	use_context_provider(|| model);
-	*/
 
 // 2. Ensure user is in a group with 1 or more people
+	/*
 	rsx! {
 		windows::groups::GroupsApp { }
-	}
+	}*/
 
 // 3. Show chat page
+	rsx! {
+		windows::chat::ChatApp { }
+	}
 }

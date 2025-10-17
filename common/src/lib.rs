@@ -9,7 +9,7 @@ pub mod model;
 #[derive(Debug)]
 pub enum UserCommand {
 	// StartTyping -> ui only event?
-	// SendMessage(Message),
+	SendMessage(Message),
 	InviteMember(String),
 	CreateGroup(String),
 }
@@ -30,11 +30,9 @@ pub static CMD_CHANNEL: Lazy<ChannelWrapper> = Lazy::new(|| {
 		rx: Arc::new(Mutex::new(rx))
 	}
 });
-/*
-use serde::{Deserialize, Serialize};
 
-
-enum MessageType {
+#[derive(Debug)]
+pub enum MessageType {
 	Text(String),
 	/*
 	Image,
@@ -42,6 +40,22 @@ enum MessageType {
 	*/
 }
 
+#[derive(Debug)]
+pub struct Message {
+	pub kind: MessageType,
+	pub sender: String
+}
+
+impl Message {
+	pub fn new(kind: MessageType, sender: &String) -> Self {
+		Self {
+			kind,
+			sender: sender.clone()
+		}
+	}
+}
+
+/*
 // message type includes metadata such as reply m(essage)_id, attached image etc...
 // message should include metadata + message type enum?
 struct Message {
