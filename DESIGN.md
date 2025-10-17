@@ -6,10 +6,10 @@
 	* group creation, inviting and joining
 	* offline message sync
 	* persistent local storage
-## Subsystems / Threads?
 
+## Subsystems / Threads?
 **Central server runs:**
-- Pubkey registry
+- Pubkey and group registry
 - DHT Message Cache bootstrap node (kademlia_dht)
 - P2P iroh bootstrap node?
 
@@ -18,7 +18,20 @@
 - P2P iroh node for group communication
 - Sqlite db for group message history
 
+## P2P
+
+* Use p2plib?
+	* Start with just gossipsub protocol to send messages
+	* Then figure out offline sync + peer discovery?
+
 ## Design problems:
+* Why not just combine the DHT and the iroh node?
+* Maybe the group registry should also be part of the dht network
+* DHT Stores:
+	* Username -> public key
+	* Group name -> list of usernames
+	* Group name + "offline sync" -> json list of message ids (message id := group_id + timestamp)
+	* Message id -> message contents
 * What is the login flow?
 	* How should authorization/sign up be performed
 		* Look into JWT (Json web token) auth

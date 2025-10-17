@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
 common = { path = "../common" }
-iroh = "0.93.2"
-kademlia-dht = "*"
+libp2p = { version = "0.54", features = ["noise", "tcp", "tokio", "yamux", "gossipsub", "mdns", "quic", "macros" ] }
 log = "0.4.28"
 n0-snafu = "0.2.2"
 once_cell = "1.21.3"

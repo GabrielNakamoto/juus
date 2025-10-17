@@ -36,9 +36,8 @@ fn get_user_config(path: &Path) -> anyhow::Result<UserConfig> {
 #[component]
 fn App() -> Element {
 // 0. Bootstrap backend threads
-	let mut runner = backend::CommandRunner::default();
-	runner.run();
-
+	let mut runner = use_signal(|| backend::CommandRunner::new());
+	runner.write().run();
 // 1. Ensure user is logged in / signed up
 	let config_path = Path::new("user.json");
 

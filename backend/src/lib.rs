@@ -1,7 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::{Notify, Mutex};
 use log::info;
+use common::UserCommand;
 
+pub mod node;
+
+use node::P2PNode;
+
+#[derive(Clone)]
 pub struct CommandRunner {
 	notify: Arc<Notify>,
 	ran_once: bool
@@ -38,13 +44,26 @@ impl CommandRunner {
 		});
 	}
 	
-	async fn runtime(notify: Arc<Notify>) {
+	async fn runtime(notify: Arc<Notify>) -> anyhow::Result<()> {
+		info!("Initializing p2p node...");
+		let mut node = P2PNode::new().await.unwrap();
+
+		tokio::spawn(async move {
+			node.listen();
+		});
+
 		let mut rx = common::CMD_CHANNEL.rx.lock().await;
 		while let Some(cmd) = rx.recv().await {
 			info!("Backend received command: {:?}", cmd);
+			match cmd {
+				UserCommand::CreateGroup(groupname) => {
+				},
+				_ => ()
+			}
 		}
 		notify.notified().await;
 		info!("Backend runtime closing down");
+		Ok(())
 	}
 }
 
