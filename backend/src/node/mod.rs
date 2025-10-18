@@ -11,8 +11,8 @@ use std::{
 };
 
 use anyhow::Context;
-use common::{Message, MessageType};
-use tokio::sync::mpsc;
+use common::{Message, MessageType, EventNotification};
+use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 
 use log::{info, warn};
 
@@ -22,16 +22,16 @@ struct JuBehaviour {
 	mdns: mdns::tokio::Behaviour
 }
 
-type MessageStream = mpsc::Receiver<Message>;
+// type MessageStream = mpsc::Receiver<Message>;
 
 pub struct P2PNode {
 	swarm: Swarm<JuBehaviour>,
-	messages: MessageStream,
+	message_in: Receiver<Message>,
 	topic: gossipsub::IdentTopic
 }
 
 impl P2PNode {
-	pub async fn new(stream: MessageStream) -> anyhow::Result<Self> {
+	pub async fn new(min: Receiver<Message>) -> anyhow::Result<Self> {
 		let mut swarm = libp2p::SwarmBuilder::with_new_identity()
 			.with_tokio()
 			.with_tcp(
@@ -69,7 +69,7 @@ impl P2PNode {
 
 		Ok(Self {
 			swarm,
-			messages: stream,
+			message_in: min,
 			topic
 		})
 	}
@@ -87,12 +87,11 @@ impl P2PNode {
 		self.swarm.listen_on(format!("/ip4/0.0.0.0/udp/{}/quic-v1", port.unwrap_or(0)).parse()?)?;
 		self.swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port.unwrap_or(0)).parse()?)?;
 
+		// TODO: serialize and send message structs using serde instead of just raw text
 		loop {
 			tokio::select! {
-				Some(msg) = self.messages.recv() => {
-					let data = match msg.kind {
-						MessageType::Text(txt) => txt.as_bytes().to_vec()
-					};
+				Some(msg) = self.message_in.recv() => {
+					let data = bincode::encode_to_vec(msg, bincode::config::standard()).unwrap();
 					if let Err(e) = self.publish_message(data) {
 						info!("Gossipsub public error: {e:?}");
 					}
@@ -118,8 +117,15 @@ impl P2PNode {
 						message_id: m_id,
 						message
 					})) => {
-						info!("Received message from peer [{}]:\n{}", p_id,
-							String::from_utf8_lossy(&message.data));
+						info!("Received message from peer [{}]", p_id);
+						let msg: common::Message = bincode::decode_from_slice(
+							&message.data[..],
+							bincode::config::standard()
+						).unwrap().0;
+						
+						let tx = common::EVT_CHANNEL.tx.clone();
+						tx.send(EventNotification::ReceivedMessage(msg)).unwrap();
+						// self.message_out.send(msg).await.unwrap();
 					},
 					_ => info!("P2P Swarm event: {:?}", event)
 				}

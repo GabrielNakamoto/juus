@@ -6,5 +6,6 @@ requires to render ui
 
 #[derive(Clone)]
 pub struct Model {
-	pub config: UserConfig
+	pub config: UserConfig,
+	pub messages: Vec<crate::Message>
 }

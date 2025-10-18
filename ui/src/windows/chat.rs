@@ -7,9 +7,17 @@ use common::{
 
 pub fn ChatApp() -> Element {
 	let mut message = use_signal(|| String::new());
-	let model = use_context::<Model>();
+	let state = use_context::<ReadOnlySignal<Model>>();
+	let model = state.read().clone();
 	rsx! {
 		h1 { "Chat" }
+		div {
+			for msg in model.messages {
+				if let MessageType::Text(text) = msg.kind {
+					{ format!("{}: {}", msg.sender, text) }
+				}
+			}
+		}
 		form {
 			onsubmit: move |event| {
 				event.prevent_default();

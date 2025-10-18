@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify, Mutex};
 use log::info;
-use common::UserCommand;
+use common::{UserCommand, EventNotification};
 
 pub mod node;
 
@@ -46,7 +46,7 @@ impl CommandRunner {
 	
 	async fn runtime(notify: Arc<Notify>, port: Option<u32>) -> anyhow::Result<()> {
 		info!("Initializing p2p node...");
-		let (mut ntx, nrx) = mpsc::channel(128);
+		let (mut ntx, nrx) = mpsc::channel(16);
 		let mut node = P2PNode::new(nrx).await.unwrap();
 
 		tokio::spawn(async move {
@@ -60,9 +60,12 @@ impl CommandRunner {
 				UserCommand::CreateGroup(groupname) => {
 				},
 				UserCommand::SendMessage(msg) => {
-					if let Err(e) = ntx.send(msg).await {
+					if let Err(e) = ntx.send(msg.clone()).await {
 						info!("Failed to send message to p2p thread: {}", e);
+						break;
 					}
+					let tx = common::EVT_CHANNEL.tx.clone();
+					tx.send(EventNotification::SentMessage(msg)).unwrap();
 				},
 				_ => ()
 			}

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex, mpsc};
+use bincode::{Encode, Decode};
+use crate::model::Model;
 
 pub mod config;
 pub mod model;
@@ -14,24 +16,37 @@ pub enum UserCommand {
 	CreateGroup(String),
 }
 
-#[derive(Clone)]
-pub struct ChannelWrapper {
-	pub tx: mpsc::UnboundedSender<UserCommand>,
-	// Arc + Mutex for multi thread
-	// mutability
-	pub rx: Arc<Mutex<mpsc::UnboundedReceiver<UserCommand>>>
+// Notifications to be send to UI
+pub enum EventNotification {
+	SentMessage(Message),
+	ReceivedMessage(Message),
 }
 
-pub static CMD_CHANNEL: Lazy<ChannelWrapper> = Lazy::new(|| {
+#[derive(Clone)]
+pub struct ChannelWrapper<T> {
+	pub tx: mpsc::UnboundedSender<T>,
+	// Arc + Mutex for multi thread
+	// mutability
+	pub rx: Arc<Mutex<mpsc::UnboundedReceiver<T>>>
+}
+
+pub static CMD_CHANNEL: Lazy<ChannelWrapper<UserCommand>> = Lazy::new(|| {
 	let (tx, mut rx) = mpsc::unbounded_channel();
 
 	ChannelWrapper {
-		tx,
-		rx: Arc::new(Mutex::new(rx))
+		tx, rx: Arc::new(Mutex::new(rx))
 	}
 });
 
-#[derive(Debug)]
+pub static EVT_CHANNEL: Lazy<ChannelWrapper<EventNotification>> = Lazy::new(|| {
+	let (tx, mut rx) = mpsc::unbounded_channel();
+
+	ChannelWrapper {
+		tx, rx: Arc::new(Mutex::new(rx))
+	}
+});
+
+#[derive(Debug, Clone, Encode, Decode)]
 pub enum MessageType {
 	Text(String),
 	/*
@@ -40,7 +55,7 @@ pub enum MessageType {
 	*/
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
 	pub kind: MessageType,
 	pub sender: String
@@ -63,9 +78,4 @@ struct Message {
 	reply_id: Option<MessageId>
 }
 
-// Notifications to be send to UI
-enum EventNotification {
-	MessageSent,
-	ReceivedMessage,
-}
 */

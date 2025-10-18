@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use std::path::Path;
 use common::config::UserConfig;
 use common::model::Model;
+use common::EventNotification;
 use windows::login::{LogInApp, LogInProps};
 use dioxus_desktop::{Config, WindowBuilder};
 use dioxus_desktop::tao::window::Fullscreen;
@@ -41,6 +42,34 @@ struct Args {
 	port: u32
 }
 
+fn use_backend_model(config: UserConfig) -> ReadOnlySignal<Model> {
+	let model = use_signal(move || Model {
+		config,
+		messages: Vec::new()
+	});
+
+	use_effect(move || {
+		let mut model = model.clone();
+		spawn(async move {
+            let mut rx = common::EVT_CHANNEL.rx.lock().await;
+            while let Some(evt) = rx.recv().await {
+                info!("Received event notification from backend...");
+                match evt {
+                    EventNotification::SentMessage(msg) => {
+                        model.write().messages.push(msg);
+                    },
+                    EventNotification::ReceivedMessage(msg) => {
+                        model.write().messages.push(msg);
+                    },
+                    _ => ()
+                }
+            }
+        });
+	});
+
+	ReadOnlySignal::new(model)
+}
+
 #[component]
 fn App() -> Element {
 // 0. Bootstrap backend threads
@@ -73,7 +102,7 @@ fn App() -> Element {
 		}
 	}
 
-	let model = Model { config: config.unwrap() };
+	let model = use_backend_model(config.unwrap());
 	use_context_provider(|| model);
 
 // 2. Ensure user is in a group with 1 or more people
