@@ -1,13 +1,12 @@
 // Delivery Service (DS)
 use futures_lite::stream::StreamExt;
 use serde::{Deserialize, Serialize};
-use sha3::Sha3_256;
+use sha3::{Digest, Sha3_256};
 use iroh::{
 	NodeId, Endpoint,
 	protocol::Router,
 	SecretKey
 };
-use sha3::Digest;
 use iroh_gossip::{
 	net::{Gossip},
 	proto::TopicId,
@@ -107,6 +106,8 @@ impl Delivery {
 		println!("Bootstrap nodes: {:?}", nids);
 		println!("Waiting for peers on topic: {}", tid);
 		let topic = self.gossip.subscribe_and_join(tid, nids).await?;
+		println!("Joined topic...");
+
 		let (tx, rx) = topic.split();
 		self.publishers.insert(key.clone(), tx);
 		self.receivers.insert(key.clone(), rx);

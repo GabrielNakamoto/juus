@@ -1,17 +1,6 @@
-use iroh::{protocol::Router, Endpoint, SecretKey, NodeId};
-use std::collections::HashMap;
 use std::path::Path;
-use iroh_gossip::{
-	net::{Gossip},
-	api::{Event, GossipReceiver},
-	proto::{TopicId}
-};
-use n0_snafu::ResultExt;
+use iroh::NodeId;
 use std::io::Write;
-use sha3::{Digest, Sha3_256};
-use hexhex::hex;
-use serde::{Serialize, Deserialize};
-use futures_lite::stream::StreamExt;
 use mls_rs::{
 	time::MlsTime,
     Client,
@@ -99,14 +88,13 @@ async fn main() -> anyhow::Result<()> {
 	};
 
 	delivery.subscribe(&args.groupid, nids).await?;
+	delivery.handle_topic(&args.groupid).await?;
 
 	let intro = Message::new(MessageBody::Introduce {
 		from: delivery.id(),
 		name: args.name.clone()
 	});
-
 	delivery.publish(&args.groupid, intro).await?;
-	delivery.handle_topic(&args.groupid);
 
 	let (ltx, mut lrx) = tokio::sync::mpsc::channel(8);
 	std::thread::spawn(move || input_loop(ltx));
@@ -131,6 +119,7 @@ fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> 
 	let stdin = std::io::stdin();
 	loop {
 		stdin.read_line(&mut buffer)?;
+		buffer.trim_end();
 
 		line_tx.blocking_send(buffer.clone())?;
 		buffer.clear();
