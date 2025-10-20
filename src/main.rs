@@ -23,49 +23,8 @@ use mls_rs::{
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature};
 use mls_rs_crypto_openssl::OpensslCryptoProvider;
 
-fn hash_topic(key: String) -> [u8; 32] {
-	let topic = key + "_juus";
-	let mut hasher = Sha3_256::new();
-	hasher.update(topic.as_bytes());
-	hasher.finalize().into()
-}
-
 mod ds;
 use ds::*;
-
-/*
-#[derive(Debug, Serialize, Deserialize)]
-struct Message {
-	body: MessageBody,
-	nonce: [u8; 16]
-}
-
-impl Message {
-	fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-		serde_json::from_slice(bytes).map_err(Into::into)
-	}
-
-	pub fn new(body: MessageBody) -> Self {
-		Self {
-			body,
-			nonce: rand::random()
-		}
-	}
-
-	pub fn to_vec(&self) -> Vec<u8> {
-		serde_json::to_vec(self).expect("serde_json::to_vec")
-	}
-}
-
-
-#[derive(Debug, Serialize, Deserialize)]
-enum MessageBody {
-	Text { from: NodeId, content: String },
-	Introduce { from: NodeId, name: String },
-	// EntryWay { owner: NodeId, question: String },
-	// JoinRequest { from: NodeId, answer: String }, // answer to a question exchanged in EntryWay msg
-	// Invitation { from: NodeId, ticket: Group }
-}*/
 
 use clap::Parser;
 #[derive(Parser, Debug)]
@@ -108,35 +67,18 @@ fn build_e2ee_identity(name: String) -> Client<impl MlsConfig> {
 async fn main() -> anyhow::Result<()> {
 	let args = Args::parse();
 
-	let secret_key = SecretKey::generate(&mut rand::rng());
-	let endpoint = Endpoint::builder()
-		.secret_key(secret_key)
-		.discovery_n0()
-		.bind()
-		.await?;
-		// .discovery_dht()
-
-	println!("Initialized endpoint with id: {}", endpoint.node_id());
+	let mut delivery = Delivery::new().await?;
 
 	let dir = Path::new("");
 	let pre = String::from(args.name.clone());
 	let mut file = tempfile::Builder::new()
 		.prefix(&pre)
 		.tempfile_in(dir)?;
-	file.write_all(endpoint.node_id().as_bytes())?;
+	file.write_all(delivery.id().as_bytes())?;
 	println!("Wrote nid to: {}", file.path().display());
-
-	let gossip = Gossip::builder().spawn(endpoint.clone());
-
-	// Routers job: Endpoint I/O -> dispatch to protocol handler
-	let router = Router::builder(endpoint.clone())
-		.accept(iroh_gossip::ALPN, gossip.clone())
-		.spawn();
 
 	let e2ee_client = build_e2ee_identity(String::from("Gabriel"));
 
-	let hash = hash_topic(args.groupid);
-	let tid = TopicId::from_bytes(hash);
 	let (group, nids) = match args.command {
 		Cmd::Open => {
 			let group = e2ee_client.create_group(
@@ -156,34 +98,30 @@ async fn main() -> anyhow::Result<()> {
 		}
 	};
 
-	println!("Waiting for peers on topic: {}", tid);
-	let topic = gossip.subscribe_and_join(tid, nids).await?;
-	let (tx, rx) = topic.split();
+	delivery.subscribe(&args.groupid, nids).await?;
 
-	{
-		let intro = Message::new(MessageBody::Introduce {
-			from: endpoint.node_id(),
-			name: args.name.clone()
-		});
-		tx.broadcast(intro.to_vec().into()).await?;
-	}
-	
-	tokio::spawn(subscribe_loop(rx));
+	let intro = Message::new(MessageBody::Introduce {
+		from: delivery.id(),
+		name: args.name.clone()
+	});
+
+	delivery.publish(&args.groupid, intro).await?;
+	delivery.handle_topic(&args.groupid);
 
 	let (ltx, mut lrx) = tokio::sync::mpsc::channel(8);
 	std::thread::spawn(move || input_loop(ltx));
 
 	while let Some(txt) = lrx.recv().await {
 		let msg = Message::new(MessageBody::Text {
-			from: endpoint.node_id(),
+			from: delivery.id(),
 			content: txt.clone()
 		});
 
 		println!("Sent: {}", txt);
-		tx.broadcast(msg.to_vec().into()).await?;
+		delivery.publish(&args.groupid, msg).await?;
 	}
 
-	router.shutdown().await?;
+	delivery.shutdown().await?;
 	Ok(())
 }
 
@@ -197,26 +135,4 @@ fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> 
 		line_tx.blocking_send(buffer.clone())?;
 		buffer.clear();
 	}
-}
-
-async fn subscribe_loop(mut rx: GossipReceiver) -> anyhow::Result<()> {
-	let mut names = HashMap::new();
-	while let Some(evt) = rx.try_next().await? {
-		if let Event::Received(msg) = evt {
-			match Message::from_bytes(&msg.content)?.body {
-				MessageBody::Introduce { from, name } => {
-					names.insert(from, name.clone());
-					println!("> Recording {} as {}", from, name);
-				},
-				MessageBody::Text { from, content } => {
-					let rep = from.fmt_short().to_string();
-					let name = names
-						.get(&from)
-						.unwrap_or_else(|| &rep);
-					println!("Received msg from {}:\n{}", name, content);
-				}
-			}
-		}
-	}
-	Ok(())
 }

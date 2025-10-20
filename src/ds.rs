@@ -50,27 +50,12 @@ pub enum MessageBody {
 	Introduce { from: NodeId, name: String },
 }
 
-// TODO: mutex sync
-struct TopicStream {
-	tx: GossipSender,
-	rx: GossipReceiver
-}
-
-impl TopicStream {
-	fn from_topic(topic: GossipTopic) -> Self {
-		let (tx, rx) = topic.split();
-		Self {
-			tx,
-			rx
-		}
-	}
-}
-
-pub struct DS {
+pub struct Delivery {
 	ep: Endpoint,
 	router: Router,
 	gossip: Gossip,
-	topics: HashMap<String, TopicStream>
+	publishers: HashMap<String, GossipSender>,
+	receivers: HashMap<String, GossipReceiver>
 }
 
 fn hash_topic(key: String) -> [u8; 32] {
@@ -80,7 +65,7 @@ fn hash_topic(key: String) -> [u8; 32] {
 	hasher.finalize().into()
 }
 
-impl DS {
+impl Delivery {
 	pub async fn new() -> anyhow::Result<Self> {
 		let skey = SecretKey::generate(&mut rand::rng());
 		let ep = Endpoint::builder()
@@ -96,25 +81,35 @@ impl DS {
 			.accept(iroh_gossip::ALPN, gossip.clone())
 			.spawn();
 
+		println!("Initialized iroh endpoint with id: {}", ep.node_id());
 		Ok(Self {
 			ep,
 			router,
 			gossip,
-			topics: HashMap::new()
+			publishers: HashMap::new(),
+			receivers: HashMap::new()
 		})
+	}
+
+	pub fn id(&self) -> NodeId {
+		self.ep.node_id()
 	}
 
 	pub async fn subscribe(
 		&mut self,
-		key: String,
+		key: &String,
 		nids: Vec<NodeId>
 	) -> anyhow::Result<()>{
 		let hash = hash_topic(key.clone());
 		let tid = TopicId::from_bytes(hash);
 
+		println!("Subscribing to topic: {}", key);
+		println!("Bootstrap nodes: {:?}", nids);
+		println!("Waiting for peers on topic: {}", tid);
 		let topic = self.gossip.subscribe_and_join(tid, nids).await?;
-		let stream = TopicStream::from_topic(topic);
-		self.topics.insert(key, stream);
+		let (tx, rx) = topic.split();
+		self.publishers.insert(key.clone(), tx);
+		self.receivers.insert(key.clone(), rx);
 		Ok(())
 	}
 
@@ -123,17 +118,20 @@ impl DS {
 		key: &String,
 		msg: Message
 	) -> anyhow::Result<()> {
-		let topic = &self.topics.get(key).context("topic not found")?;
+		let tx = &self.publishers.get(key).context("topic not found")?;
 
-		topic.tx.broadcast(msg.to_vec().into()).await?;
+		tx.broadcast(msg.to_vec().into()).await?;
 		Ok(())
 	}
 
-	pub async fn handle_topic(&mut self, key: &String) -> anyhow::Result<()> {
-		let mut topic = &mut self.topics.get_mut(key).context("topic not found")?;
-		let mut names = HashMap::new();
+	pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+		self.router.shutdown().await?;
+		Ok(())
+	}
 
-		while let Some(evt) = topic.rx.try_next().await? {
+	async fn handle_topic_impl(mut rx: GossipReceiver) -> anyhow::Result<()> {
+		let mut names = HashMap::new();
+		while let Some(evt) = rx.try_next().await? {
 			if let Event::Received(msg) = evt {
 				match Message::from_bytes(&msg.content)?.body {
 					MessageBody::Introduce  { from, name } => {
@@ -150,6 +148,13 @@ impl DS {
 				}
 			}
 		}
+		Ok(())
+	}
+
+	pub async fn handle_topic(&mut self, key: &String) -> anyhow::Result<()> {
+		let mut rx = self.receivers.remove(key).context("topic not found")?;
+		println!("Spawned async handler task for topic: {}", key);
+		tokio::spawn(Self::handle_topic_impl(rx));
 
 		Ok(())
 	}
