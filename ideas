@@ -1,0 +1,19 @@
+Use the iroh examples ticket idea to invite new nodes to group
+The group owner will act as the server:
+	* they have to be online for a new person to join
+	* they enter the group id (topic key) which is then hashed and the joiner's node
+	  sends a group request message over the topic
+	* the owner then gets a join request and can accept the new joiner
+
+
+Privacy protection:
+	* If a node is not part of the owners group list than its messages are ignored through gossip.handler(fn)
+	* The white list is managed by the group owner and updates are broadcasted to other members
+	* Messages are encrypted after serialization
+	* use endpoint.dial_direct(peer_nid)
+
+	* Have an entryway topic that the group leader subscribes to and is open free for anyone to send to
+	* Then the leader can send a invitation message including the name of the actual group topic for
+	  the new member to join with
+
+	* look into E2EE: https://docs.rs/mls-rs/latest/mls_rs/
