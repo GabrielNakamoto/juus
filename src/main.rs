@@ -1,6 +1,7 @@
 use std::path::Path;
 use iroh::NodeId;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 use std::io::Write;
 use mls_rs::{
 	time::MlsTime,
@@ -8,7 +9,7 @@ use mls_rs::{
     Client,
 	Group,
 	// ReceivedMessage,
-	client_builder::MlsConfig,
+	client_builder::{MlsConfig, BaseConfig, WithIdentityProvider, WithCryptoProvider},
     identity::{SigningIdentity, basic::{BasicIdentityProvider, BasicCredential}},
     CipherSuite,
 	ExtensionList
@@ -68,9 +69,12 @@ pub enum MessageBody {
 	Introduce { from: NodeId, name: String },
 }
 
+type MyMlsConfig = WithIdentityProvider<
+	BasicIdentityProvider,
+	WithCryptoProvider<OpensslCryptoProvider, BaseConfig>
+	>;
 
-
-fn build_e2ee_identity(name: String) -> Client<impl MlsConfig> {
+fn build_e2ee_identity(name: &String) -> Client<MyMlsConfig> {
 	use rand_core::OsRng;
 	let mut crng = OsRng;
 	let signer = SigningKey::generate(&mut crng);
@@ -86,6 +90,104 @@ fn build_e2ee_identity(name: String) -> Client<impl MlsConfig> {
 		.identity_provider(BasicIdentityProvider::new())
 		.signing_identity(s_identity, secret, CipherSuite::CURVE25519_AES128)
 		.build()
+}
+
+use tokio::sync::Mutex;
+use std::sync::Arc;
+struct Entrance {
+	delivery: Delivery,
+	mls: Client<MyMlsConfig>,
+	group: Arc<Mutex<Group<MyMlsConfig>>>,
+}
+
+/*
+Application specific I/O interface
+** Use async channels
+
+* You give it Message structs, it handles encryption and delivery
+* It receives message structs, decrypts them and hands them to application
+*/
+impl Entrance {
+	type Family = Arc<Mutex<Group<MyMlsConfig>>>;
+	type Packet = Vec<u8>;
+
+	async fn open(
+		name: &String,
+		topickey: &String,
+		mailbox: mpsc::Sender<Message>,
+		post: mpsc::Receiver<Message>
+	) -> anyhow::Result<Self> {
+		let mls = build_e2ee_identity(name);
+		let group = Arc::new(Mutex::new(mls.create_group(
+			ExtensionList::new(),
+			ExtensionList::new(),
+			Some(MlsTime::now())
+		)?));
+		let delivery = Delivery::new().await?;
+		let mut rx = delivery.subscribe(topickey, vec![], false)?;
+
+		tokio::spawn(Self::greet(group.clone(), rx, house));
+		tokio::spawn(Self::deliver(group.clone(), post)):
+
+		Ok(Self {
+			group,
+			delivery,
+			mls,
+		})
+	}
+
+	fn encrypt(
+		group: &Family,
+		msg: Message
+	) -> anyhow::Result<Packet> {
+		let binding = msg.to_vec();
+		let mlsmsg = group.encrypt_application_message(
+			binding.as_slice(),
+			vec![]
+		)?;
+
+		Ok(mlsmsg.to_bytes()?)
+	}
+
+	fn decrypt(
+		group: &Family,
+		pack: Packet
+	) -> anyhow::Result<ReceivedMessage> {
+		let mlsmsg = MlsMessage::from_bytes(&pack)?;
+
+		Ok(group.process_incoming_message(mlsmsg)?)
+	}
+
+	async fn greet(
+		group: Family,
+		mut topic: mpsc::Receiver<Packet>,
+		mailbox: mpsc::Sender<Message>
+	) {
+		while let Some(packet) = topic.recv().await {
+			// todo handle event error
+			if let Ok(event) = decrypt(&group, packet) {
+				match event {
+					ApplicationMessage(description) => {
+					},
+					_ => ()
+				}
+			} else {
+				// error
+			}
+		}
+	}
+
+	async fn deliver(
+		group: Family,
+		mut post: mpsc::Receiver<Message>
+	) {
+		while let Some(msg) = post.recv().await {
+		}
+	}
+
+	/*
+	async fn join() {
+	}*/
 }
 
 /*
@@ -115,8 +217,19 @@ async fn main() -> anyhow::Result<()> {
 	file.write_all(delivery.id().as_bytes())?;
 	println!("Wrote nid to: {}", file.path().display());
 
-	let e2ee_client = build_e2ee_identity(String::from("Gabriel"));
+	// let e2ee_client = build_e2ee_identity(String::from("Gabriel"));
 
+	let entrance = match args.command {
+		Cmd::Open => {
+			let ent = Entrance::open(&args.name).await?;
+			ent
+		},
+		Cmd::Join { nid } => {
+			let ent = Entrance::open(&args.name).await?;
+			ent
+		}
+	};
+	/*
 	let (mut group, nids) = match args.command {
 		Cmd::Open => {
 			let group = e2ee_client.create_group(
@@ -135,10 +248,10 @@ async fn main() -> anyhow::Result<()> {
 			nf.read_exact(&mut buf)?;
 			(None, vec![NodeId::from_bytes(&buf)?])
 		}
-	};
+	};*/
 
 	let handle = delivery.subscribe(&args.groupid, nids).await?;
-	tokio::spawn(handle_loop(handle));
+	tokio::spawn(handle_loop(state.group.clone(), handle));
 
 	let intro = Message::new(MessageBody::Introduce {
 		from: delivery.id(),
@@ -157,10 +270,11 @@ async fn main() -> anyhow::Result<()> {
 		});
 
 		let mut bytes = msg.to_vec();
+		/*
 		if let Some(group) = &mut group {
 			let encmsg = group.encrypt_application_message(bytes.as_slice(), vec![])?;
 			bytes = encmsg.to_bytes()?;
-		}
+		}*/
 		
 		println!("Sent: {}", txt);
 		delivery.publish(&args.groupid, bytes).await?;
@@ -191,19 +305,24 @@ fn handle_msg(names: &mut HashMap<NodeId, String>, bytes: &Vec<u8>) -> anyhow::R
 	Ok(())
 }
 
-async fn handle_loop(mut stream: tokio::sync::mpsc::Receiver<Vec<u8>>) -> anyhow::Result<()> {
+async fn handle_loop(
+	group: Arc<Mutex<Group<MyMlsConfig>>>,
+	mut stream: mpsc::Receiver<Vec<u8>>
+) -> anyhow::Result<()> {
 	println!("Initiated application message receive loop...");
 
-	let mut names = HashMap::new();
+	// let mut names = HashMap::new();
 	while let Some(bytes) = stream.recv().await {
+		/*
 		if let Err(e) = handle_msg(&mut names, &bytes) {
 			println!("Failed to receive a message: {}", e);
 		}
+		*/
 	}
 	Ok(())
 }
 
-fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> {
+fn input_loop(line_tx: mpsc::Sender<String>) -> anyhow::Result<()> {
 	let mut buffer = String::new();
 
 	let stdin = std::io::stdin();

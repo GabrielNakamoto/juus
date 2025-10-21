@@ -76,7 +76,8 @@ impl Delivery {
 	pub async fn subscribe(
 		&mut self,
 		key: &String,
-		nids: Vec<NodeId>
+		nids: Vec<NodeId>,
+		wait: bool
 	) -> anyhow::Result<mpsc::Receiver<Vec<u8>>>{
 		let hash = hash_topic(key.clone());
 		let tid = TopicId::from_bytes(hash);
@@ -84,7 +85,13 @@ impl Delivery {
 		println!("Subscribing to topic: {}", key);
 		println!("Bootstrap nodes: {:?}", nids);
 		println!("Waiting for peers on topic: {}", tid);
-		let topic = self.gossip.subscribe_and_join(tid, nids).await?;
+
+		let topic = if wait {
+			self.gossip.subscribe_and_join(tid, nids).await?
+		} else {
+			self.gossip.subscribe(tid, nids).await?
+		};
+
 		println!("Joined topic...");
 
 		let (tx, mut rx) = topic.split();
