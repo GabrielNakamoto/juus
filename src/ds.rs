@@ -1,4 +1,11 @@
 // Delivery Service (DS)
+
+/*
+Should not deal with application specific abstractions
+	* Given binary data to transmit
+	* Sends received binary data over async channel for application handling
+*/
+
 use futures_lite::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -19,42 +26,13 @@ use iroh_gossip::{
 };
 use anyhow::Context;
 use std::collections::HashMap;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Message {
-	pub body: MessageBody,
-	pub nonce: [u8; 16]
-}
-
-impl Message {
-	pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-		serde_json::from_slice(bytes).map_err(Into::into)
-	}
-
-	pub fn new(body: MessageBody) -> Self {
-		Self {
-			body,
-			nonce: rand::random()
-		}
-	}
-
-	pub fn to_vec(&self) -> Vec<u8> {
-		serde_json::to_vec(self).expect("serde_json::to_vec")
-	}
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum MessageBody {
-	Text { from: NodeId, content: String },
-	Introduce { from: NodeId, name: String },
-}
+use tokio::sync::mpsc;
 
 pub struct Delivery {
 	ep: Endpoint,
 	router: Router,
 	gossip: Gossip,
 	publishers: HashMap<String, GossipSender>,
-	receivers: HashMap<String, GossipReceiver>
 }
 
 fn hash_topic(key: String) -> [u8; 32] {
@@ -64,12 +42,14 @@ fn hash_topic(key: String) -> [u8; 32] {
 	hasher.finalize().into()
 }
 
+// static DIRECT_ALPN: &str = "juus/iroh/0.1";
+
 impl Delivery {
 	pub async fn new() -> anyhow::Result<Self> {
 		let skey = SecretKey::generate(&mut rand::rng());
 		let ep = Endpoint::builder()
 			.secret_key(skey)
-			.discovery_n0()
+			.discovery_dht()
 			.bind()
 			.await?;
 
@@ -86,7 +66,6 @@ impl Delivery {
 			router,
 			gossip,
 			publishers: HashMap::new(),
-			receivers: HashMap::new()
 		})
 	}
 
@@ -98,7 +77,7 @@ impl Delivery {
 		&mut self,
 		key: &String,
 		nids: Vec<NodeId>
-	) -> anyhow::Result<()>{
+	) -> anyhow::Result<mpsc::Receiver<Vec<u8>>>{
 		let hash = hash_topic(key.clone());
 		let tid = TopicId::from_bytes(hash);
 
@@ -108,20 +87,23 @@ impl Delivery {
 		let topic = self.gossip.subscribe_and_join(tid, nids).await?;
 		println!("Joined topic...");
 
-		let (tx, rx) = topic.split();
+		let (tx, mut rx) = topic.split();
+		let (out, handle) = mpsc::channel(8);
+
 		self.publishers.insert(key.clone(), tx);
-		self.receivers.insert(key.clone(), rx);
-		Ok(())
+		tokio::spawn(Self::handle_topic_impl(out, rx));
+
+		Ok(handle)
 	}
 
 	pub async fn publish(
 		&mut self,
 		key: &String,
-		msg: Message
+		bytes: Vec<u8>
 	) -> anyhow::Result<()> {
 		let tx = &self.publishers.get(key).context("topic not found")?;
 
-		tx.broadcast(msg.to_vec().into()).await?;
+		tx.broadcast(bytes.into()).await?;
 		Ok(())
 	}
 
@@ -130,33 +112,20 @@ impl Delivery {
 		Ok(())
 	}
 
-	async fn handle_topic_impl(mut rx: GossipReceiver) -> anyhow::Result<()> {
-		let mut names = HashMap::new();
-		while let Some(evt) = rx.try_next().await? {
-			if let Event::Received(msg) = evt {
-				match Message::from_bytes(&msg.content)?.body {
-					MessageBody::Introduce  { from, name } => {
-						names.insert(from, name.clone());
-						println!("Alias {} => {}", from, name);
-					},
-					MessageBody::Text { from, content } => {
-						let rep = from.fmt_short().to_string();
-						let name = names
-							.get(&from)
-							.unwrap_or_else(|| &rep);
-						println!("Received msg from {}:\n{}", name, content);
-					}
-				}
-			}
-		}
+	/*
+	pub async fn send_direct(&mut self, nid: NodeId, msg: Message) -> anyhow::Result<()> {
+		let conn = self.ep.connect(nid, DIRECT_ALPN.as_bytes());
 		Ok(())
 	}
+	*/
 
-	pub async fn handle_topic(&mut self, key: &String) -> anyhow::Result<()> {
-		let mut rx = self.receivers.remove(key).context("topic not found")?;
-		println!("Spawned async handler task for topic: {}", key);
-		tokio::spawn(Self::handle_topic_impl(rx));
-
+	async fn handle_topic_impl(stream: mpsc::Sender<Vec<u8>>, mut rx: GossipReceiver) -> anyhow::Result<()> {
+		println!("Initiated async topic handler...");
+		while let Some(evt) = rx.try_next().await? {
+			if let Event::Received(msg) = evt {
+				stream.send(msg.content.to_vec()).await;
+			}
+		}
 		Ok(())
 	}
 }
