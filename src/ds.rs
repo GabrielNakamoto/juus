@@ -77,7 +77,6 @@ impl Delivery {
 		&mut self,
 		key: &String,
 		nids: Vec<NodeId>,
-		wait: bool
 	) -> anyhow::Result<mpsc::Receiver<Vec<u8>>>{
 		let hash = hash_topic(key.clone());
 		let tid = TopicId::from_bytes(hash);
@@ -86,11 +85,7 @@ impl Delivery {
 		println!("Bootstrap nodes: {:?}", nids);
 		println!("Waiting for peers on topic: {}", tid);
 
-		let topic = if wait {
-			self.gossip.subscribe_and_join(tid, nids).await?
-		} else {
-			self.gossip.subscribe(tid, nids).await?
-		};
+		let topic = self.gossip.subscribe_and_join(tid, nids).await?;
 
 		println!("Joined topic...");
 
