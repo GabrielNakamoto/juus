@@ -1,15 +1,14 @@
 use std::path::Path;
-use iroh::NodeId;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use std::io::Write;
-use serde::{Deserialize, Serialize};
+use iroh::NodeId;
 
 mod ds;
-mod message;
+mod types;
 mod entrance;
 use ds::*;
-use message::*;
+use types::*;
 use entrance::Entrance;
 
 use clap::Parser;
@@ -31,50 +30,54 @@ struct Args {
 	command: Cmd
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-	let args = Args::parse();
-	/*
-	let mut delivery = Delivery::new().await?;
-
+fn serialize_id(name: &String, nid: &NodeId) -> anyhow::Result<()> {
 	let dir = Path::new("");
-	let pre = String::from(args.name.clone());
+	let pre = String::from(name.clone());
 	let mut file = tempfile::Builder::new()
 		.prefix(&pre)
 		.tempfile_in(dir)?;
-	file.write_all(delivery.id().as_bytes())?;
+	file.write_all(nid.as_bytes())?;
 	println!("Wrote nid to: {}", file.path().display());
-	*/
+	Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+	let args = Args::parse();
 
 	let (tx, mailbox) = mpsc::channel(8);
 	let (post, rx) = mpsc::channel(8);
-	let entrance = match args.command {
-		Cmd::Open => {
-			let ent = Entrance::open(&args.name, &args.groupid, tx, rx).await?;
-			ent
-		},
-		Cmd::Join { nid } => {
-			let ent = Entrance::open(&args.name, &args.groupid, tx, rx).await?;
-			ent
-		}
-	};
 
-	/*
-	let (mut group, nids) = match args.command {
+	let nid = match args.command {
+		Cmd::Open => {
+			let (mut entrance, nid) = Entrance::new(&args.name, &args.groupid, None).await?;
+			tokio::spawn(entrance.open(tx, rx));
+
+			println!("Spawned entrance open");
+			nid
+		},
 		Cmd::Join { nid } => {
 			use std::io::Read;
 
 			let mut nf = std::fs::File::open(Path::new(&nid))?;
 			let mut buf = [0; 32];
 			nf.read_exact(&mut buf)?;
-			(None, vec![NodeId::from_bytes(&buf)?])
+
+			let nids = vec![NodeId::from_bytes(&buf)?];
+
+			let (mut entrance, nid) = Entrance::new(&args.name, &args.groupid, Some(nids)).await?;
+			// tokio::spawn(entrance.join(tx, rx));
+
+			nid
 		}
-	};*/
+	};
+
+	serialize_id(&args.name, &nid);
 
 	tokio::spawn(receive_loop(mailbox));
 
 	let intro = Message::new(MessageBody::Introduce {
-		from: entrance.id(),
+		from: nid,
 		name: args.name.clone()
 	});
 
@@ -85,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
 	while let Some(txt) = lrx.recv().await {
 		let msg = Message::new(MessageBody::Text {
-			from: entrance.id(),
+			from: nid,
 			content: txt.clone()
 		});
 

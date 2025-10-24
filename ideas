@@ -17,3 +17,9 @@ Privacy protection:
 	  the new member to join with
 
 	* look into E2EE: https://docs.rs/mls-rs/latest/mls_rs/
+
+New members:
+	* New members join the directory topic using a juus topic string
+	* Group member monitors directory topic for join requests on async task / thread
+	* These requests are sent to application where the group member can accept requests
+	* On an accept mls group is updated and the new member is added to chat topic
