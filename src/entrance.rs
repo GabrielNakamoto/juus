@@ -127,7 +127,7 @@ impl Entrance {
 	Creates a group owner entrance
 	*/
 	pub async fn open(
-		mut self,
+		&mut self,
 		mailbox: mpsc::Sender<Message>,
 		mut post: mpsc::Receiver<Message>
 	) -> anyhow::Result<()> {
@@ -139,7 +139,7 @@ impl Entrance {
 
 		let (dir_runner, dir) = self.delivery.subscribe(
 			self.dirhash.clone(),
-			self.nids.unwrap_or(vec![])
+			self.nids.clone().unwrap_or(vec![])
 		).await?;
 
 		let chathash = gen_topic();
@@ -169,7 +169,7 @@ impl Entrance {
 	}
 
 	pub async fn join(
-		mut self,
+		&mut self,
 		mailbox: mpsc::Sender<Message>,
 		mut post: mpsc::Receiver<Message>,
 	) -> anyhow::Result<()> {
@@ -181,7 +181,7 @@ impl Entrance {
 
 		let (dir_runner, mut dir) = self.delivery.subscribe(
 			self.dirhash.clone(),
-			self.nids.unwrap_or(vec![])
+			self.nids.clone().unwrap_or(vec![])
 		).await?;
 
 		dir_runner.spawn();

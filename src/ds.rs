@@ -21,7 +21,7 @@ use iroh::{
 	SecretKey
 };
 use iroh_gossip::{
-	net::{Gossip},
+	net::{Gossip, GOSSIP_ALPN},
 	proto::TopicId,
 	api::{Event, GossipTopic, GossipSender, GossipReceiver},
 };
@@ -67,19 +67,20 @@ impl TransportRunner {
 
 	pub fn spawn(mut self) {
 		tokio::spawn(async move {
-			info!("Transport runner task spawned for topic hash: {}", hex(self.meta));
+			info!("Transport runner task spawned for topic hash: {}", hex(&self.meta[..8]));
 			info!("Bootstraping with: {:#?}", self.bootstrap);
 			info!("Waiting for peers...");
 
-			let topic = self.gossip.subscribe_and_join(
+			let topic = self.gossip.subscribe(
 				self.tid,
 				self.bootstrap
 			).await.unwrap();
 
-			info!("Peer found...");
-
+			info!("Subscribed to topic...");
 			let (tx, mut rx) = topic.split();
-			info!("{:#?}", rx.neighbors().collect::<Vec<_>>());
+			
+			rx.joined().await.unwrap();
+			info!("Found peers...");
 
 			self.ready.notify_waiters();
 
@@ -102,7 +103,6 @@ impl TransportRunner {
 }
 
 pub struct Delivery {
-	ep: Endpoint,
 	router: Router,
 	gossip: Arc<Gossip>,
 }
@@ -114,26 +114,27 @@ impl Delivery {
 		let ep = Endpoint::builder()
 			.secret_key(skey)
 			.discovery(mdns)
+			.alpns(vec![GOSSIP_ALPN.to_vec()])
 			.bind()
 			.await?;
 
 		let gossip = Gossip::builder()
 			.spawn(ep.clone());
 
-		let router = Router::builder(ep.clone())
-			.accept(iroh_gossip::ALPN, gossip.clone())
+		let id = ep.id();
+		let router = Router::builder(ep)
+			.accept(GOSSIP_ALPN, gossip.clone())
 			.spawn();
 
-		info!("Initialized iroh endpoint with id: {}", ep.id());
+		info!("Initialized iroh endpoint with id: {}", id.fmt_short());
 		Ok(Self {
-			ep,
 			router,
 			gossip: Arc::new(gossip),
 		})
 	}
 
 	pub fn id(&self) -> EndpointId {
-		self.ep.id()
+		self.router.endpoint().id()
 	}
 
 	pub async fn subscribe(

@@ -39,13 +39,13 @@ async fn main() -> anyhow::Result<()> {
 	let (tx, mailbox) = mpsc::channel(8);
 	let (post, rx) = mpsc::channel(8);
 
-	let nid = match args.command {
+	let (entrance, nid) = match args.command {
 		Cmd::Open => {
 			let (mut entrance, nid) = Entrance::new(&args.name, &args.groupid, None).await?;
-			tokio::spawn(entrance.open(tx, rx));
-
+			entrance.open(tx, rx).await;
 			println!("Spawned entrance open");
-			nid
+
+			(entrance, nid)
 		},
 		Cmd::Join { nid } => {
 			use std::io::Read;
@@ -57,9 +57,9 @@ async fn main() -> anyhow::Result<()> {
 			let nids = vec![EndpointId::from_bytes(&buf)?];
 
 			let (mut entrance, nid) = Entrance::new(&args.name, &args.groupid, Some(nids)).await?;
-			tokio::spawn(entrance.join(tx, rx));
+			entrance.join(tx, rx).await;
 
-			nid
+			(entrance, nid)
 		}
 	};
 
