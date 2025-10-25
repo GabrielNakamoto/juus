@@ -12,10 +12,11 @@ API:
 */
 
 use hexhex::hex;
+use log::{info, debug, error};
 use futures_lite::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use iroh::{
-	NodeId, Endpoint,
+	EndpointId, Endpoint,
 	protocol::Router,
 	SecretKey
 };
@@ -28,11 +29,6 @@ use tokio::sync::{mpsc, Notify};
 use crate::types::*;
 use std::sync::Arc;
 
-pub struct Delivery {
-	ep: Endpoint,
-	router: Router,
-	gossip: Gossip,
-}
 
 pub struct TransportStream {
 	pub tx: mpsc::Sender<Packet>,
@@ -41,17 +37,22 @@ pub struct TransportStream {
 }
 
 pub struct TransportRunner {
-	tx: GossipSender,
-	rx: GossipReceiver,
+	meta: Hash,
+	gossip: Arc<Gossip>,
+	tid: TopicId,
+	bootstrap: Vec<EndpointId>,
 	ready: Arc<Notify>,
 	tr_in: mpsc::Receiver<Packet>,
 	tr_out: mpsc::Sender<Packet>
 }
 
 impl TransportRunner {
-	pub fn new(topic: GossipTopic) -> (Self, TransportStream) {
-		let (tx, rx) = topic.split();
-
+	pub fn new(
+		gossip: Arc<Gossip>,
+		tid: TopicId,
+		bootstrap: Vec<EndpointId>,
+		hash: Hash
+	) -> (Self, TransportStream) {
 		let (apptx, tr_in) = mpsc::channel::<Packet>(8);
 		let (tr_out, apprx) = mpsc::channel::<Packet>(8);
 
@@ -59,25 +60,40 @@ impl TransportRunner {
 		let ready2 = ready.clone();
 
 		(
-			Self {tx, rx, ready, tr_in, tr_out},
+			Self { meta: hash, gossip, tid, bootstrap, ready, tr_in, tr_out },
 			TransportStream {tx: apptx, rx: apprx, ready: ready2}
 		)
 	}
 
 	pub fn spawn(mut self) {
 		tokio::spawn(async move {
-			self.rx.joined().await.unwrap();
+			info!("Transport runner task spawned for topic hash: {}", hex(self.meta));
+			info!("Bootstraping with: {:#?}", self.bootstrap);
+			info!("Waiting for peers...");
+
+			let topic = self.gossip.subscribe_and_join(
+				self.tid,
+				self.bootstrap
+			).await.unwrap();
+
+			info!("Peer found...");
+
+			let (tx, mut rx) = topic.split();
+			info!("{:#?}", rx.neighbors().collect::<Vec<_>>());
+
 			self.ready.notify_waiters();
 
-			tokio::select! {
-				Ok(Some(evt)) = self.rx.try_next() => {
-					if let Event::Received(msg) = evt {
-						self.tr_out.send(msg.content.to_vec()).await;
-					}
-				},
-				Some(bytes) = self.tr_in.recv() => {
-					if let Err(why) = self.tx.broadcast(bytes.into()).await {
-						println!("Delivery broadcast error: {}", why);
+			loop {
+				tokio::select! {
+					Ok(Some(evt)) = rx.try_next() => {
+						if let Event::Received(msg) = evt {
+							self.tr_out.send(msg.content.to_vec()).await;
+						}
+					},
+					Some(bytes) = self.tr_in.recv() => {
+						if let Err(why) = tx.broadcast(bytes.into()).await {
+							error!("Delivery broadcast error: {}", why);
+						}
 					}
 				}
 			}
@@ -85,13 +101,19 @@ impl TransportRunner {
 	}
 }
 
-// static DIRECT_ALPN: &str = "juus/iroh/0.1";
+pub struct Delivery {
+	ep: Endpoint,
+	router: Router,
+	gossip: Arc<Gossip>,
+}
+
 impl Delivery {
 	pub async fn new() -> anyhow::Result<Self> {
 		let skey = SecretKey::generate(&mut rand::rng());
+		let mdns = iroh::discovery::mdns::MdnsDiscovery::builder();
 		let ep = Endpoint::builder()
 			.secret_key(skey)
-			.discovery_dht()
+			.discovery(mdns)
 			.bind()
 			.await?;
 
@@ -102,62 +124,27 @@ impl Delivery {
 			.accept(iroh_gossip::ALPN, gossip.clone())
 			.spawn();
 
-		println!("Initialized iroh endpoint with id: {}", ep.node_id());
+		info!("Initialized iroh endpoint with id: {}", ep.id());
 		Ok(Self {
 			ep,
 			router,
-			gossip,
+			gossip: Arc::new(gossip),
 		})
 	}
 
-	pub fn id(&self) -> NodeId {
-		self.ep.node_id()
+	pub fn id(&self) -> EndpointId {
+		self.ep.id()
 	}
 
 	pub async fn subscribe(
 		&mut self,
 		hash: Hash,
-		nids: Vec<NodeId>,
+		nids: Vec<EndpointId>,
 	) -> anyhow::Result<(TransportRunner, TransportStream)> {
 		let tid = TopicId::from_bytes(hash.clone());
+		// let topic = self.gossip.subscribe(tid, nids).await?;
 
-		println!("Waiting for peers on topic: {}", hex(hash));
-		println!("\tBootstrap nodes: {:?}", nids);
-
-		let topic = self.gossip.subscribe(tid, nids).await?;
-
-		println!("Joined topic...");
-
-		Ok(TransportRunner::new(topic))
-		/*
-		let (tx, mut rx) = topic.split();
-
-		let (apptx, mut bIn) = mpsc::channel::<Packet>(8);
-		let (bOut, apprx) = mpsc::channel::<Packet>(8);
-
-		let notify = Arc::new(Notify::new());
-		let notify2 = notify.clone();
-
-		tokio::spawn(async move {
-			rx.joined().await.unwrap();
-			notify.notify_waiters();
-
-			tokio::select! {
-				Ok(Some(evt)) = rx.try_next() => {
-					if let Event::Received(msg) = evt {
-						bOut.send(msg.content.to_vec()).await;
-					}
-				},
-				Some(bytes) = bIn.recv() => {
-					if let Err(why) = tx.broadcast(bytes.into()).await {
-						println!("Delivery broadcast error: {}", why);
-					}
-				}
-			}
-		});
-		*/
-
-		// Ok(TransportHandle { tx: apptx, rx: apprx, ready: notify2 })
+		Ok(TransportRunner::new(self.gossip.clone(), tid, nids, hash))
 	}
 
 	pub async fn shutdown(&mut self) -> anyhow::Result<()> {

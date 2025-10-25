@@ -12,11 +12,12 @@ use mls_rs::{
 	group::ReceivedMessage,
 	group::ReceivedMessage::*,
 	client_builder::{MlsConfig, BaseConfig, WithIdentityProvider, WithCryptoProvider},
-    identity::{SigningIdentity, basic::{BasicIdentityProvider, BasicCredential}},
+    identity::{SigningIdentity, Credential, basic::{BasicIdentityProvider, BasicCredential}},
     CipherSuite,
 	ExtensionList
 };
 use sha3::{Digest, Sha3_256};
+use log::{info, debug, error};
 
 
 fn hash_topic(key: String) -> [u8; 32] {
@@ -81,7 +82,7 @@ pub struct Entrance {
 	mls: Client<MyMlsConfig>,
 	delivery: Delivery,
 	dirhash: Hash,
-	nids: Option<Vec<iroh::NodeId>>
+	nids: Option<Vec<iroh::EndpointId>>
 }
 
 impl Entrance {
@@ -106,8 +107,8 @@ impl Entrance {
 	pub async fn new(
 		name: &String,
 		groupid: &String,
-		nids: Option<Vec<iroh::NodeId>>
-	) -> anyhow::Result<(Self, iroh::NodeId)> {
+		nids: Option<Vec<iroh::EndpointId>>
+	) -> anyhow::Result<(Self, iroh::EndpointId)> {
 		let mls = Self::build_e2ee_identity(name);
 		let mut delivery = Delivery::new().await?;
 		let nid = delivery.id();
@@ -167,12 +168,10 @@ impl Entrance {
 		Ok(())
 	}
 
-	/*
 	pub async fn join(
 		mut self,
 		mailbox: mpsc::Sender<Message>,
 		mut post: mpsc::Receiver<Message>,
-		nids: Vec<iroh::NodeId>
 	) -> anyhow::Result<()> {
 		let kpkg = self.mls.generate_key_package_message(
 			ExtensionList::new(),
@@ -180,13 +179,19 @@ impl Entrance {
 			Some(MlsTime::now())
 		)?;
 
-		let chat = self.delivery.subscribe(self.chathash.clone(), vec![]).await?;
-		let mut dir = self.delivery.subscribe(self.dirhash.clone(), vec![]).await?;
+		let (dir_runner, mut dir) = self.delivery.subscribe(
+			self.dirhash.clone(),
+			self.nids.unwrap_or(vec![])
+		).await?;
+
+		dir_runner.spawn();
+		dir.ready.notified().await;
 
 		// broadcast key package to directory
 		dir.tx.send(kpkg.to_bytes()?).await.unwrap();
 
 		// wait for posible welcome message
+		/*
 		while let Some(packet) = dir.rx.recv().await {
 			match MlsMessage::from_bytes(&packet) {
 				Ok(msg) => {
@@ -201,12 +206,13 @@ impl Entrance {
 				},
 				Err(why) => println!("Error parsing message in entrance.join(): {}", why)
 			}
-		}
+		}*/
 
 		// let (group, info) = self.mls.join_group(None, welcome, None)?;
+		// let (chat_runner, chat) = self.delivery.subscribe(self.chathash.clone(), vec![]).await?;
 
 		Ok(())
-	}*/
+	}
 
 	async fn encrypt(
 		group: &AsyncGroup,
@@ -245,7 +251,23 @@ impl Entrance {
 	) -> anyhow::Result<()> {
 		stream.ready.notified().await;
 
+		// NOTE: For now have group owner store in memory hash map (kpg ref hash -> kpg)
+		// 		 Eventually use dkv with iroh_docs over entire network / group?
 		while let Some(packet) = stream.rx.recv().await {
+			if let Ok(msg) = MlsMessage::from_bytes(&packet) {
+				if msg.description() != MlsMessageDescription::KeyPackage {
+					continue;
+				}
+
+				// TODO: better err handling?
+				if let Some(kpkg) = msg.as_key_package() {
+					let identity = kpkg.signing_identity();
+					if let Credential::Basic(credential) = &identity.credential {
+						let name = String::from_utf8(credential.identifier.clone()).unwrap();
+						info!("Received group join request from {}", name);
+					}
+				}
+			}
 		}
 		Ok(())
 	}
@@ -295,11 +317,11 @@ impl Entrance {
 		ready.notified().await;
 
 		while let Some(msg) = post.recv().await {
-			println!("Encrypting + delivering message: {:#?}", msg.body);
+			info!("Encrypting + delivering message: {:#?}", msg.body);
 			let pack = Self::encrypt(&group, msg).await?;
 			tx.send(pack).await?;
 			// delivery.publish(&topickey, pack).await?;
-			println!("Message delivered");
+			info!("Message delivered");
 		}
 		Ok(())
 	}

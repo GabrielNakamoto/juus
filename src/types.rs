@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use iroh::NodeId;
+use iroh::EndpointId;
 
 pub type Packet = Vec<u8>;
 pub type Hash = [u8; 32];
@@ -29,7 +29,7 @@ impl Message {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MessageBody {
-	Text { from: NodeId, content: String },
-	Introduce { from: NodeId, name: String },
+	Text { from: EndpointId, content: String },
+	Introduce { from: EndpointId, name: String },
 }
 

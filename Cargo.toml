@@ -5,10 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-iroh-gossip = "0.93.1"
+iroh-gossip = "0.94.0"
 n0-snafu = "0.2.2"
 tokio = "1.48.0"
-iroh = { version = "0.93.2", features = ["discovery-pkarr-dht", "discovery-local-network"]}
+iroh = { version = "0.94.0", features = ["discovery-local-network"] }
 rand = "0.9.2"
 rand_core = "0.6.4"
 sha3 = "0.10.8"
@@ -21,3 +21,5 @@ tempfile = "3.23.0"
 mls-rs = "0.51.0"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"]}
 mls-rs-crypto-openssl = "0.18.0"
+log = "0.4.28"
+env_logger = "0.11.8"

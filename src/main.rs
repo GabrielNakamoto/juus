@@ -2,7 +2,7 @@ use std::path::Path;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use std::io::Write;
-use iroh::NodeId;
+use iroh::EndpointId;
 
 mod ds;
 mod types;
@@ -30,19 +30,10 @@ struct Args {
 	command: Cmd
 }
 
-fn serialize_id(name: &String, nid: &NodeId) -> anyhow::Result<()> {
-	let dir = Path::new("");
-	let pre = String::from(name.clone());
-	let mut file = tempfile::Builder::new()
-		.prefix(&pre)
-		.tempfile_in(dir)?;
-	file.write_all(nid.as_bytes())?;
-	println!("Wrote nid to: {}", file.path().display());
-	Ok(())
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+	env_logger::init();
 	let args = Args::parse();
 
 	let (tx, mailbox) = mpsc::channel(8);
@@ -63,16 +54,22 @@ async fn main() -> anyhow::Result<()> {
 			let mut buf = [0; 32];
 			nf.read_exact(&mut buf)?;
 
-			let nids = vec![NodeId::from_bytes(&buf)?];
+			let nids = vec![EndpointId::from_bytes(&buf)?];
 
 			let (mut entrance, nid) = Entrance::new(&args.name, &args.groupid, Some(nids)).await?;
-			// tokio::spawn(entrance.join(tx, rx));
+			tokio::spawn(entrance.join(tx, rx));
 
 			nid
 		}
 	};
 
-	serialize_id(&args.name, &nid);
+	let dir = Path::new("");
+	let pre = String::from(args.name.clone());
+	let mut file = tempfile::Builder::new()
+		.prefix(&pre)
+		.tempfile_in(dir)?;
+	file.write_all(nid.as_bytes())?;
+	println!("Wrote nid to: {}", file.path().display());
 
 	tokio::spawn(receive_loop(mailbox));
 
