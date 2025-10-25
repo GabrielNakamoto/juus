@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::{Delivery, TransportStream, types::*};
+use crate::{DsTicket, Delivery, TransportStream, types::*};
 use tokio::sync::{mpsc, Mutex, Notify};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature};
 use mls_rs_crypto_openssl::OpensslCryptoProvider;
@@ -14,7 +14,8 @@ use mls_rs::{
 	client_builder::{MlsConfig, BaseConfig, WithIdentityProvider, WithCryptoProvider},
     identity::{SigningIdentity, Credential, basic::{BasicIdentityProvider, BasicCredential}},
     CipherSuite,
-	ExtensionList
+	Extension, ExtensionList,
+	extension::ExtensionType
 };
 use sha3::{Digest, Sha3_256};
 use log::{info, debug, error};
@@ -131,8 +132,19 @@ impl Entrance {
 		mailbox: mpsc::Sender<Message>,
 		mut post: mpsc::Receiver<Message>
 	) -> anyhow::Result<()> {
+		let chathash = gen_topic();
+
+		let ticket = DsTicket { 
+			topic_hash: chathash,
+			bootstrap: vec![self.delivery.id()]
+		};
+		let info = serde_json::to_vec(&ticket).unwrap();
+
+		let mut context = ExtensionList::new();
+		context.set(Extension::new(ExtensionType::APPLICATION_ID, info));
+
 		let group = Arc::new(Mutex::new(self.mls.create_group(
-			ExtensionList::new(),
+			context,
 			ExtensionList::new(),
 			Some(MlsTime::now())
 		)?));
@@ -142,13 +154,12 @@ impl Entrance {
 			self.nids.clone().unwrap_or(vec![])
 		).await?;
 
-		let chathash = gen_topic();
 		let (chat_runner, chat) = self.delivery.subscribe(
 			chathash.clone(),
 			vec![]
 		).await?;
 
-		tokio::spawn(Self::greet(group.clone(), dir));
+		tokio::spawn(Self::greet(group.clone(), dir, chathash));
 		dir_runner.spawn();
 
 		tokio::spawn(Self::receive(
@@ -188,28 +199,41 @@ impl Entrance {
 		dir.ready.notified().await;
 
 		// broadcast key package to directory
+		info!("Broadcasting key package to directory topic");
 		dir.tx.send(kpkg.to_bytes()?).await.unwrap();
 
 		// wait for posible welcome message
-		/*
-		while let Some(packet) = dir.rx.recv().await {
-			match MlsMessage::from_bytes(&packet) {
-				Ok(msg) => {
-					if let MlsMessageDescription::Welcome {
-						key_package_refs: refs,
-						cipher_suite: suite
-					} =  msg.description() {
-						for kpg_ref in refs {
-							println!("Referenced kpkg: {:#?}", *kpg_ref);
-						}
+		let welcome = loop {
+			if let Some(packet) = dir.rx.recv().await {
+				if let Ok(msg) = MlsMessage::from_bytes(&packet) {
+					if let MlsMessageDescription::Welcome { .. } =  msg.description() {
+						break msg;
 					}
-				},
-				Err(why) => println!("Error parsing message in entrance.join(): {}", why)
+				}
 			}
-		}*/
+		};
 
-		// let (group, info) = self.mls.join_group(None, welcome, None)?;
-		// let (chat_runner, chat) = self.delivery.subscribe(self.chathash.clone(), vec![]).await?;
+		info!("Joining group");
+		let (group, info) = self.mls.join_group(None, &welcome, None)?;
+		let context = group.context();
+		let extension = context.extensions.get(ExtensionType::APPLICATION_ID).unwrap();
+		let ticket: DsTicket = serde_json::from_slice(&extension.extension_data).unwrap();
+
+		let group = Arc::new(Mutex::new(group));
+		let (chat_runner, chat) = self.delivery.subscribe(ticket.topic_hash, ticket.bootstrap).await?;
+		tokio::spawn(Self::receive(
+			group.clone(),
+			chat.ready.clone(),
+			chat.rx,
+			mailbox
+		));
+		tokio::spawn(Self::deliver(
+			group.clone(),
+			chat.ready.clone(),
+			chat.tx,
+			post
+		));
+		chat_runner.spawn();
 
 		Ok(())
 	}
@@ -247,6 +271,7 @@ impl Entrance {
 	async fn greet(
 		group: AsyncGroup,
 		mut stream: TransportStream,
+		chathash: Hash,
 		// notifications: mpsc::Sender<()>
 	) -> anyhow::Result<()> {
 		stream.ready.notified().await;
@@ -266,6 +291,16 @@ impl Entrance {
 						let name = String::from_utf8(credential.identifier.clone()).unwrap();
 						info!("Received group join request from {}", name);
 					}
+					info!("Proposing group add");
+					let proposal = group.lock().await.propose_add(msg, vec![])?;
+
+					// NOTE: proposal should be broadcasted to chat topic prolly?
+					// stream.tx.send(proposal.to_bytes()?);
+					let commit = group.lock().await.commit(vec![])?;
+					for welcome in commit.welcome_messages {
+						stream.tx.send(welcome.to_bytes()?).await;
+					}
+					// group.lock().await.process_incoming_message(msg);
 				}
 			}
 		}

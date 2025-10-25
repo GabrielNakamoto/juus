@@ -29,6 +29,11 @@ use tokio::sync::{mpsc, Notify};
 use crate::types::*;
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsTicket {
+	pub topic_hash: Hash,
+	pub bootstrap: Vec<EndpointId>
+}
 
 pub struct TransportStream {
 	pub tx: mpsc::Sender<Packet>,
