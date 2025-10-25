@@ -318,10 +318,13 @@ impl Entrance {
 		mailbox: mpsc::Sender<Message>
 	) -> anyhow::Result<()> {
 		ready.notified().await;
+		info!("Receive task woke up");
 		// let mut rx = topic.await?;
 		// while let Some(packet) = rx.recv().await {
 		while let Some(packet) = rx.recv().await {
+			info!("Received packet");
 			// todo handle event error
+			/*
 			if let Ok(event) = Self::decrypt(&group, packet).await {
 				match event {
 					ReceivedMessage::ApplicationMessage(description) => {
@@ -334,7 +337,7 @@ impl Entrance {
 				}
 			} else {
 				// error
-			}
+			}*/
 		}
 		Ok(())
 	}
@@ -350,6 +353,7 @@ impl Entrance {
 		mut post: mpsc::Receiver<Message>,
 	) -> anyhow::Result<()> {
 		ready.notified().await;
+		info!("Delivery task woke up");
 
 		while let Some(msg) = post.recv().await {
 			info!("Encrypting + delivering message: {:#?}", msg.body);

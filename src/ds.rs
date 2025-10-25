@@ -87,22 +87,27 @@ impl TransportRunner {
 			rx.joined().await.unwrap();
 			info!("Found peers...");
 
-			self.ready.notify_waiters();
-
-			loop {
-				tokio::select! {
-					Ok(Some(evt)) = rx.try_next() => {
-						if let Event::Received(msg) = evt {
-							self.tr_out.send(msg.content.to_vec()).await;
-						}
-					},
-					Some(bytes) = self.tr_in.recv() => {
-						if let Err(why) = tx.broadcast(bytes.into()).await {
-							error!("Delivery broadcast error: {}", why);
-						}
+			let listen_handle = tokio::spawn(async move {
+				while let Ok(Some(evt)) = rx.try_next().await {
+					info!("Received event from gossip receiver for hash: {}", hex(&self.meta[..8]));
+					if let Event::Received(msg) = evt {
+						self.tr_out.send(msg.content.to_vec()).await;
 					}
 				}
-			}
+			});
+			let deliver_handle = tokio::spawn(async move {
+				while let Some(bytes) = self.tr_in.recv().await {
+					info!("Sending packet to topic: {}", hex(&self.meta[..8]));
+					if let Err(why) = tx.broadcast(bytes.into()).await {
+						error!("Delivery broadcast error: {}", why);
+					}
+				}
+			});
+
+			self.ready.notify_waiters();
+
+			tokio::join!(listen_handle, deliver_handle);
+			info!("Transport runner for hash: {} died", hex(&self.meta[..8]));
 		});
 	}
 }
